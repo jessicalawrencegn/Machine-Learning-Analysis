@@ -1,0 +1,1859 @@
+---
+title: '210421794'
+author: "Jessica"
+date: "2024-03-01"
+output: html_document
+---
+
+```{r}
+# Set working directory
+setwd("~/Desktop/machine learning coursework")
+```
+
+```{r}
+# Load necessary library
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+library(corrplot)
+library(factoextra)
+library(cluster)
+library(reshape2)
+library(caTools)
+library(caret)
+library(randomForest)
+library(glmnet)
+library(rpart)
+library(rpart.plot)
+library(tidyr)
+library(MASS)
+library(car)
+library(pROC)
+library(class)
+```
+
+**UNSUPERVISED LEARNING**
+
+#Dataset link:
+#[link](https://www.kaggle.com/datasets/imakash3011/customer-personality-analysis/data)
+
+```{r}
+# Load the dataset
+cust_df <- read.csv("marketing_campaign.csv", header = TRUE, sep = "\t")
+head(cust_df)
+```
+
+# EXPLORATORY DATA ANALYSIS
+
+```{r}
+# Explore the data
+str(cust_df)
+```
+```{r}
+summary(cust_df)
+```
+
+```{r}
+# Check for any missing values and duplicated values
+sum(is.na(cust_df))
+sum(duplicated(cust_df))
+```
+*Result: There are 24 NAs and no duplicated values.*
+```{r}
+# Identify which column has the null values
+colSums(is.na(cust_df))
+```
+*Result: 24 NAs are in Income column. We will remove rows with missing values before analyzing the data since 24NAs only account for approximately 1% of the total observations.*
+```{r}
+# Remove the NA values
+cust_df <- na.omit(cust_df)
+nrow(cust_df)  
+```
+*Result: Total number of observations after removing rows with missing values: 2216.*
+
+```{r}
+# Create a new variable "Age", using the formula: current year - Year_Birth, for easier interpretation
+cust_df$Age <- 2024 - cust_df$Year_Birth
+head(cust_df$Age)
+```
+
+```{r}
+# Combine the variables Kidhome and Teenhome into one variable called Child
+cust_df$Child <- cust_df$Kidhome + cust_df$Teenhome
+```
+
+```{r}
+# Explore the categorical variables: Marital_Status and Education
+# Plot for Marital_Status
+ms_plot <- ggplot(cust_df, aes(x = Marital_Status)) +
+  geom_bar(fill = "skyblue", col = "black") +
+  theme_minimal() +
+  labs(title = "Distribution of Marital Status", x = "Marital Status", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Plot for Education
+edu_plot <- ggplot(cust_df, aes(x = Education)) +
+  geom_bar(fill = "lightgreen", col = "black") +
+  theme_minimal() +
+  labs(title = "Distribution of Education", x = "Education", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5))
+grid.arrange(ms_plot, edu_plot, ncol = 2)
+```
+```{r}
+# Reassign Marital_Status variable into "Single" and "Taken"
+cust_df$Marital_Status <- ifelse(cust_df$Marital_Status %in% c("Married", "Together"), "Taken", "Single")
+
+# Convert Marital_Status variable to numerical data type
+cust_df$Marital_Status <- as.numeric(ifelse(cust_df$Marital_Status == "Single", 1, 2))
+str(cust_df$Marital_Status)
+```
+
+```{r}
+# Reassign Education variable into "Basic Education", "Undergraduate Education", and "Higher Education")
+cust_df$Education <- ifelse(cust_df$Education %in% c("PhD", "Master", "2n Cycle"), "Higher Education", 
+                            ifelse(cust_df$Education %in% c("Graduation"), "Undergraduate Education", 
+                                   "Basic Education"))
+
+# Convert Education variable to numerical data type
+cust_df$Education <- as.numeric(ifelse(cust_df$Education == "Basic Education", 1,
+                                       ifelse(cust_df$Education == "Undergraduate Education", 2, 3)))
+str(cust_df$Education)
+```
+
+*Note: Based on the previous summary(cust_df), it appears that Z_CostContact and Z_Revenue each contains a single, uniform value across all observations. To confirm, we will generate bar plots for these variables to visually inspect.*
+```{r}
+# Bar plots for Z_CostContact and Z_Revenue
+# Plot for Z_CostContact
+ms_plot <- ggplot(cust_df, aes(x = Z_CostContact)) +
+  geom_bar(fill = "yellow", col = "black") +
+  theme_minimal() +
+  labs(title = "Distribution of Z_CostContact", x = "Z_CostContact", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Plot for Z_Revenue
+edu_plot <- ggplot(cust_df, aes(x = Z_Revenue)) +
+  geom_bar(fill = "orange", col = "black") +
+  theme_minimal() +
+  labs(title = "Distribution of Z_Revenue", x = "Z_Revenue", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5))
+grid.arrange(ms_plot, edu_plot, ncol = 2)
+```
+*Result: The bar plots confirm that each variable contains one single uniform value for all observations. The uniformity suggests that these variables do not provide useful information for analysis, so we will drop both features.*
+
+```{r}
+# Drop unnecessary and redundant columns
+cust_df <- cust_df %>%
+  dplyr::select(-ID, -Year_Birth, -Kidhome, -Teenhome, -Dt_Customer, -Z_CostContact, -Z_Revenue)
+str(cust_df)
+```
+
+```{r}
+# Check the distribution for each variable
+numeric_vars <- sapply(cust_df, is.numeric)
+exclude_vars <- c("Education", "Marital_Status", "AcceptedCmp3", "AcceptedCmp4", "AcceptedCmp5", "AcceptedCmp1", "AcceptedCmp2", "Complain", "Response")
+numeric_vars <- numeric_vars & !names(cust_df) %in% exclude_vars
+plots1 <- list()
+```
+```{r}
+# Boxplot for each variables in numeric_vars
+for(var in names (cust_df)[numeric_vars]) {
+  boxplot <- ggplot(cust_df, aes_string(x = var)) +
+    geom_boxplot() +
+    theme_minimal() +
+    labs(title = var, y = "", x = var)
+  plots1[[var]] <- boxplot
+}
+do.call(grid.arrange, c(plots1, ncol = 3, top = "Boxplot for each Observation"))
+```
+*Result: From the boxplots, it can be seen that the outliers for 'Income' and 'Age' variables are not normal, so we will further analyse these 2 variables. As for the remaining variables, we will keep the outliers as they may provide useful information to analyse extreme cases.*
+
+```{r}
+# Analyze the extreme outliers
+calc_outliers <- function(data, var_name) {
+  q1 <- quantile(data[[var_name]], 0.25, na.rm = TRUE)
+  q3 <- quantile(data[[var_name]], 0.75, na.rm = TRUE)
+  iqr <- q3 - q1
+  lower_bound <- q1 - 3 * iqr
+  upper_bound <- q3 + 3 * iqr
+  outliers <- data[[var_name]][data[[var_name]] < lower_bound | data[[var_name]] > upper_bound]
+  return(outliers)
+}
+```
+```{r}
+# Income Outliers
+outliers_income <- calc_outliers(cust_df, "Income")
+outliers_income
+```
+*Result: the value 666666 is significantly more distant from the other observations, so we will exclude this particular observation from the analysis.*
+```{r}
+# Age Outliers
+outliers_age <- calc_outliers(cust_df, "Age")
+outliers_age
+```
+*Result: 124 131 125. The 3 values seems to be unrealistic and substantially different from the rest, so we will remove the 3 observations.*
+```{r}
+# Remove outliers
+outliers_remove <- cust_df$Income == 666666 | cust_df$Age %in% c(124, 131, 125)
+cust_df <- cust_df[!outliers_remove, ]
+nrow(cust_df) 
+```
+*Total number of observations after removing outliers: 2212.*
+
+```{r}
+# Distribution of the excluded variables, which are "Education", "Marital_Status", "AcceptedCmp3", "AcceptedCmp4", "AcceptedCmp5", "AcceptedCmp1", "AcceptedCmp2", "Complain", "Response"
+plots2 <- list()
+
+for(var in exclude_vars) {
+  barplot <- ggplot(cust_df, aes_string(x = var)) +
+    geom_bar() +
+    theme_minimal() +
+    labs(title = var, y = "Count", x = var)
+  plots2[[var]] <- barplot
+}
+do.call(grid.arrange, c(plots2, ncol = 3, top = "Bar Plot for each Observation"))
+```
+
+```{r}
+# Correlation plot
+cor_matrix1 <- cor(cust_df, use = "complete.obs")
+corrplot(cor_matrix1, method = "color", type = "upper", order = "hclust",
+         tl.cex = 0.7, tl.col = "black", tl.srt = 45,
+         addCoef.col = "black", number.cex = 0.4,
+         addgrid.col = "gray",
+         diag = FALSE)
+```
+*Result: The correlation plot indicates several high correlations between variables, which appeared logical and expected. For example, Income is highly correlated with variables such as MntWines and MntMeatProducts, which represent the amounts spent on wines and meat, respectively. This suggests that higher income may associated with increased spending on these products. Additionally, Income shows a high correlation with variables indicating the number of purchases made, like NumCatalogPurchases and NumStorePurchases, highlighting that higher income is associated with more frequent purchases.*
+
+```{r}
+# Last preview on cust_df before we conduct any unsupervised learning tasks
+summary(cust_df)
+```
+```{r}
+str(cust_df)
+```
+
+# 1 PRINCIPAL COMPONENT ANALYSIS (PCA)
+
+```{r}
+# Perform PCA
+pca <- prcomp(cust_df, center = TRUE, scale. = TRUE)
+summary(pca)
+```
+*Result: Utilizing the Kaiser Criterion, we select principal components with an eigenvalue (variance) greater than one, ensuring each retained component explains variance equivalent to or greater than a single standardized variable (variance of a standardized variable is 1). Thus, in this case, the first 7 principal components (PC1, PC2, PC3, PC4, PC5, PC6, PC7) with variance > 1 will be considered for this PCA.*
+```{r}
+pca$rotation
+```
+*PC1 represents spending behavior. Income, MntWines, MntFruits, MntMeatProducts, MntFishProducts, MntSweetProducts, and MntGoldProds load heavily on PC1.*
+*PC2 represents campaign responsiveness. AcceptedCmp1, AcceptedCmp2, AcceptedCmp4, and AcceptedCmp5 load heavily on PC2.*
+*PC3 represents deals seeking behavior. NumDealsPurchases and NumWebPurchases load heavily on PC3.*
+*PC4 represents another campaign responsiveness, but only to specific campaign which are 3rd campaign and last campaign. AcceptedCmp3 and Response load heavily on PC4.*
+*PC5 represents education influence. Education and Age load heavily on PC5.*
+*PC6 represents marital status influence. MArital_Status load heavily on PC6.*
+*PC7 represents complain minimization behavior. Complain have has a high negative loading on PC7.*
+
+```{r}
+# Visualize PCA results using biplot
+# Biplot for principal components 1 and 2
+fviz_pca_biplot(pca, axes = c(1,2), label = "var", pointsize = 1, col.ind="cos2", col.var="red") +
+  scale_color_gradient2(low = "midnightblue", mid = "skyblue", high = "white", midpoint = 0.5) +
+  labs(title = "Biplot for PC1 and PC2", x = "Principal Component 1", y = "Principal Component 2") +
+  theme_minimal() +
+  theme(plot.title=element_text(hjust=0.5))
+```
+```{r}
+# Biplot for principal components 3 and 4
+fviz_pca_biplot(pca, axes = c(3,4), label = "var", pointsize = 1, col.ind="cos2", col.var="red") +
+  scale_color_gradient2(low="midnightblue", mid="skyblue", high="white", midpoint=0.5) +
+  labs(title ="Biplot for PC3 and PC4", x = "Principal Component 3", y = "Principal Component 4") +
+  theme_minimal() +
+  theme(plot.title=element_text(hjust=0.5))
+```
+```{r}
+# Biplot for principal components 5 and 6
+fviz_pca_biplot(pca, axes = c(5,6), label = "var", pointsize = 1, col.ind="cos2", col.var="red") +
+  scale_color_gradient2(low="midnightblue", mid="skyblue", high="white", midpoint=0.5) +
+  labs(title ="Biplot for PC5 and PC6", x = "Principal Component 5", y = "Principal Component 6") +
+  theme_minimal() +
+  theme(plot.title=element_text(hjust=0.5))
+```
+```{r}
+# Biplot for principal components 6 and 7
+fviz_pca_biplot(pca, axes = c(6,7), label = "var", pointsize = 1, col.ind="cos2", col.var="red") +
+  scale_color_gradient2(low="midnightblue", mid="skyblue", high="white", midpoint=0.5) +
+  labs(title ="Biplot for PC6 and PC7", x = "Principal Component 6", y = "Principal Component 7") +
+  theme_minimal() +
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+```{r}
+# Variance explained by each principal components and cumulative proportion
+# Derive proportion of variance explained
+pca_var <- pca$sdev^2
+pca_var
+```
+```{r}
+pca_prop_var <- pca_var/sum(pca_var)
+pca_prop_var
+```
+
+```{r}
+# Cumulative proportion
+pca_cum_prop <- cumsum(pca_prop_var)
+pca_cum_prop
+```
+
+```{r}
+# Visualize the proportion of variance explained by each principal component and the cumulative proportion of variance explained using Scree Plot
+par(mfrow = c(1, 2))
+plot(pca_prop_var, xlab = "Principal Component", ylab = "Proportion of Variance Explained", ylim = c(0,1), type = "o", main = "Scree Plot of Proportion of Variance")
+plot(pca_cum_prop, xlab = "Principal Component", ylab = "Cumulative Proportion of Variance Explained", ylim = c(0,1), type = "o", main = "Scree Plot of Cumulative Proportion")
+par(mfrow = c(1, 1))
+```
+
+```{r}
+plot(pca_var, xlab = "Principal Component", ylab = "Variance Explained", type = "o", main = "Scree Plot of Variance Explained")
+abline(h = 1, col = "red", lty = 2)
+indices <- which(pca_var > 1)
+points(indices, pca_var[indices], col = "red", pch = 20)
+```
+*Result: From the Scree Plot of Variance Explained, we choose Principal Components 1 to 7 (PC1, PC2, PC3, PC4, PC5, PC6, PC7) as the part of our PCA analysis. The selection is due to each component explaining a variance greater than 1, surpassing the variance explained by a single standardized variable. However, note that these 7 PCs only account for 62.19% of the total variance (cumulative proportion) of the data.*
+
+# 2 K-MEANS CLUSTERING
+
+```{r}
+# Scale the data
+cust_df_scaled <- scale(cust_df)
+```
+
+```{r}
+# Determine the optimal number of clusters using elbow method
+fviz_nbclust(cust_df_scaled, kmeans, method = "wss") +
+  labs(title = "Optimal Number of Clusters",
+       subtitle = "Elbow Method") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)) 
+```
+
+```{r}
+# Determine the optimal number of clusters using silhouette method
+fviz_nbclust(cust_df_scaled, kmeans, method = "silhouette") +
+  labs(title = "Optimal Number of Clusters",
+       subtitle = "Silhouette Method") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+*Result: According to the elbow method, the ideal number of clusters is three (k = 3). On the other side, the silhouette method suggests 2 as the optimal number of clusters. We decide to proceed with a more detailed analysis using k = 3.*
+
+```{r}
+# Perform k-means clustering for k = 3
+set.seed(1000) # For reproducibility
+km <- kmeans(cust_df_scaled, centers = 3, nstart = 25)
+summary(km)
+```
+```{r}
+km$centers
+```
+
+```{r}
+# Visualize the cluster
+fviz_cluster(km, data = cust_df_scaled, geom = "point", ellipse.type = "convex", palette = c("pink", "skyblue", "turquoise"), ggtheme = theme_bw()) +
+  ggtitle("K-Means Clustering", subtitle = "k = 3") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+```{r}
+# Analyze the result of the cluster
+table(km$cluster)
+```
+```{r}
+km_result <- data.frame(cust_df, km$cluster)
+
+km_result$Education <- factor(km_result$Education, levels = 1:3)
+
+km_result$Marital_Status <- factor(km_result$Marital_Status, levels = 1:2)
+
+km_result$Total_Spending <- km_result$MntWines + km_result$MntFruits + km_result$MntMeatProducts + km_result$MntFishProducts + km_result$MntSweetProducts + km_result$MntGoldProds
+
+km_result$AcceptedCmp <- km_result$AcceptedCmp1 + km_result$AcceptedCmp2 + km_result$AcceptedCmp3 + km_result$AcceptedCmp4 + km_result$AcceptedCmp5 + km_result$Response
+
+km_result$Total_Pur <- km_result$NumDealsPurchases + km_result$NumWebPurchases + km_result$NumCatalogPurchases + km_result$NumStorePurchases
+
+km_result$HaveChildren <- ifelse(km_result$Child > 0, "Have Children", "No Children")
+km_result$HaveChildren <- factor(km_result$HaveChildren, levels = c("No Children", "Have Children"))
+
+km_result$Cluster <- as.factor(km_result$km.cluster)
+km_result$km.cluster <- NULL
+```
+
+```{r}
+cluster1 <- subset(km_result, km$cluster == "1")
+cluster2 <- subset(km_result, km$cluster == "2")
+cluster3 <- subset(km_result, km$cluster == "3")
+```
+
+```{r}
+km_edu <- data.frame(matrix(ncol = 3, nrow = 0))
+colnames(km_edu) <- c("Basic", "Undergraduate", "Higher")
+km_edu[1,] <- round(prop.table(table(cluster1$Education)),4)
+km_edu[2,] <- round(prop.table(table(cluster2$Education)),4)
+km_edu[3,] <- round(prop.table(table(cluster3$Education)),4)
+ggplot(data = km_result) + geom_jitter(mapping = aes(x = Cluster,y = Education)) + 
+  labs(title = "Education by Cluster") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+km_ms <- data.frame(matrix(ncol = 2, nrow = 0))
+colnames(km_ms) <- c("Single", "Taken")
+km_ms[1,] <- round(prop.table(table(cluster1$Marital_Status)),4)
+km_ms[2,] <- round(prop.table(table(cluster2$Marital_Status)),4)
+km_ms[3,] <- round(prop.table(table(cluster3$Marital_Status)),4)
+ggplot(data = km_result) + geom_jitter(mapping = aes(x = Cluster,y = Marital_Status)) + 
+  labs(title = "Marital Status by Cluster") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+km_income <- data.frame(matrix(ncol = 1, nrow = 0))
+colnames(km_income) <- "Average_Income"
+km_income[1,] <- round(mean(cluster1$Income),4)
+km_income[2,] <- round(mean(cluster2$Income),4)
+km_income[3,] <- round(mean(cluster3$Income),4)
+ggplot(km_result) + geom_histogram(mapping = aes(x = Income),bins = 30) + facet_wrap(~Cluster) +
+  labs(title = "Income by Cluster") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+km_spending <- data.frame(matrix(ncol = 1, nrow = 0))
+colnames(km_spending) <- "Average_TotalSpending"
+km_spending[1,] <- round(mean(cluster1$Total_Spending),4)
+km_spending[2,] <- round(mean(cluster2$Total_Spending),4)
+km_spending[3,] <- round(mean(cluster3$Total_Spending),4)
+km_spending_long <- melt(km_result,
+                         id.vars = "Cluster",
+                         measure.vars = c("MntWines", "MntFruits", "MntMeatProducts", "MntFishProducts", "MntSweetProducts", "MntGoldProds"))
+ggplot(km_spending_long, aes(x = variable, y = value, fill = Cluster)) +
+  geom_boxplot() + theme_light() + labs(title = "Spending by Cluster") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+km_purchases <- data.frame(matrix(ncol = 1, nrow = 0))
+colnames(km_purchases) <- "Average_TotalPurchases"
+km_purchases[1,] <- round(mean(cluster1$Total_Pur),4)
+km_purchases[2,] <- round(mean(cluster2$Total_Pur),4)
+km_purchases[3,] <- round(mean(cluster3$Total_Pur),4)
+km_purchases_long <- melt(km_result,
+                         id.vars = "Cluster",
+                         measure.vars = c("NumDealsPurchases", "NumWebPurchases", "NumCatalogPurchases", "NumStorePurchases"))
+ggplot(km_purchases_long, aes(x = variable, y = value, fill = Cluster)) +
+  geom_boxplot() + theme_light() + labs(title = "Purchases by Cluster") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+km_webvisit <- data.frame(matrix(ncol = 1, nrow = 0))
+colnames(km_webvisit) <- "Average_WebVisit"
+km_webvisit[1,] <- round(mean(cluster1$NumWebVisitsMonth),4)
+km_webvisit[2,] <- round(mean(cluster2$NumWebVisitsMonth),4)
+km_webvisit[3,] <- round(mean(cluster3$NumWebVisitsMonth),4)
+ggplot(km_result) + geom_histogram(mapping = aes(x = NumWebVisitsMonth),bins = 30) + facet_wrap(~Cluster) +
+  labs(title = "Number of Web Visit per Month by Cluster") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+km_cmp <- data.frame(matrix(ncol = 1, nrow = 0))
+colnames(km_cmp) <- "Average_AcceptedCampaign"
+km_cmp[1,] <- round(mean(cluster1$AcceptedCmp),4)
+km_cmp[2,] <- round(mean(cluster2$AcceptedCmp),4)
+km_cmp[3,] <- round(mean(cluster3$AcceptedCmp),4)
+ggplot(km_result) + geom_histogram(mapping = aes(x = AcceptedCmp),bins = 30) + facet_wrap(~Cluster) +
+  labs(title = "Accepted Campaign by Cluster") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+km_age <- data.frame(matrix(ncol = 1, nrow = 0))
+colnames(km_age) <- "Average_Age"
+km_age[1,] <- round(mean(cluster1$Age),4)
+km_age[2,] <- round(mean(cluster2$Age),4)
+km_age[3,] <- round(mean(cluster3$Age),4)
+ggplot(km_result) + geom_histogram(mapping = aes(x = Age),bins = 30) + facet_wrap(~Cluster) +
+  labs(title = "Age by Cluster") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+km_children <- data.frame(matrix(ncol = 2, nrow = 0))
+colnames(km_children) <- c("No Children", "Have Children")
+km_children[1,] <- round(prop.table(table(cluster1$HaveChildren)),4)
+km_children[2,] <- round(prop.table(table(cluster2$HaveChildren)),4)
+km_children[3,] <- round(prop.table(table(cluster3$HaveChildren)),4)
+ggplot(data = km_result) + geom_jitter(mapping = aes(x = Cluster,y = HaveChildren)) + 
+  labs(title = "Children by Cluster") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+km_analysis <- data.frame(table(km$cluster))
+colnames(km_result) <- c("cluster", "frequency")
+km_analysis <- cbind(km_analysis, km_edu, km_ms, km_income, km_spending, km_purchases, km_webvisit, km_cmp, km_age, km_children)
+km_analysis
+```
+*Cluster 1 can be labeled as "Middle-Income Family with Children". This cluster represents a stable household with moderate income level, high overall spending and purchases, often including children in their family.*
+*Cluster 2 can be labeled as "High-Income Childfree Family". This cluster is highlighted by the highest average income and spending levels, along with a notable absence of children in the household.*
+*Cluster 3 can be labeled as "Low-Income Family with Children". This cluster has a lower economic status, with corresponding spending and purchasing levels. Notably, this cluster has the youngest average age, possibly indicating they are at the beginning of the family life and career path.*
+
+# 3 HIERARCHICAL CLUSTERING
+
+```{r}
+set.seed(1000)
+```
+
+```{r}
+# Specify the distance measure
+ed <- dist(cust_df_scaled, method = "euclidean")
+```
+
+```{r}
+# Perform hierarchical clustering using Complete, Single, and Average linkage methods
+hc_complete <- hclust(ed, method = "complete") #Maximal intercluster dissimilarity
+hc_single <- hclust(ed, method = "single") #Minimal intercluster dissimilarity
+hc_average <- hclust(ed, method = "average") #Mean intercluster dissimilarity
+```
+
+```{r}
+# Plot each linkage method of hierarchical clustering
+par(mfrow = c(1, 3))
+plot(hc_complete, main = "Complete Linkage", sub = "", xlab = "", ylab = "Height")
+plot(hc_single, main = "Single Linkage", sub = "", xlab = "", ylab = "Height")
+plot(hc_average, main = "Average Linkage", sub = "", xlab = "", ylab = "Height")
+par(mfrow = c(1, 1))
+```
+
+```{r}
+# Compute agglomerative coefficients
+ac_complete <- agnes(ed, method = "complete")$ac
+ac_single <- agnes(ed, method = "single")$ac
+ac_average <- agnes(ed, method = "average")$ac
+```
+*Using the agnes() function so that we can retrieve the agglomerative coefficient directly.*
+```{r}
+ac_df <- data.frame(
+  Method = c("Complete", "Single", "Average"),
+  Agglomerative_Coefficient = c(ac_complete, ac_single, ac_average)
+)
+ac_df
+```
+*Result: Complete method has the highest agglomerative coefficient and therefore we will use this method for further analysis for finalizing clusters.*
+
+```{r}
+# Plot the dendogram for hierarchical clustering using Complete linkage method
+hc_final <- agnes(ed, method = "complete")
+pltree(hc_final, cex = 0.55, hang = -1, main = "Dendogram of Complete Linkage Hierarchical Clustering")
+```
+
+```{r}
+# Optimal number of clusters using elbow and shilhouette methods
+# Elbow Method
+fviz_nbclust(cust_df_scaled, FUN = hcut, method = "wss") +
+  labs(title = "Elbow Method") + theme(plot.title = element_text(hjust = 0.5))
+```
+*Result: The optimal number of clusters is three.*
+
+```{r}
+# Cut the dendogram using the optimal number of clusters
+hc_cut <- cutree(hc_final, k = 3)
+table(hc_cut)
+```
+*Result: the result shows that cutting the tree at k = 3 leads to a highly uneven distribution of the data points across the clusters. Majority of the data points are in Cluster 1 with 2178 points, while Cluster 2 and 3 contain only 4 and 30 data points, respectively. This suggests that hierarchical clustering may not effectively differentiate distinnct customer groups within this dataset.*
+
+```{r}
+hc_result <- cust_df
+hc_result$Cluster <- as.factor(hc_cut)
+
+hc_result$Education <- factor(hc_result$Education, levels = 1:3)
+
+hc_result$Marital_Status <- factor(hc_result$Marital_Status, levels = 1:2)
+
+hc_result$Total_Spending <- hc_result$MntWines + hc_result$MntFruits + hc_result$MntMeatProducts + hc_result$MntFishProducts + hc_result$MntSweetProducts + hc_result$MntGoldProds
+
+hc_result$AcceptedCmp <- hc_result$AcceptedCmp1 + hc_result$AcceptedCmp2 + hc_result$AcceptedCmp3 + hc_result$AcceptedCmp4 + hc_result$AcceptedCmp5 + hc_result$Response
+hc_result <- hc_result %>%
+  dplyr::select(-AcceptedCmp1, -AcceptedCmp2, -AcceptedCmp3, -AcceptedCmp4, -AcceptedCmp5, -Response)
+
+hc_result$Total_Pur <- hc_result$NumDealsPurchases + hc_result$NumWebPurchases + hc_result$NumCatalogPurchases + hc_result$NumStorePurchases
+
+hc_result$HaveChildren <- ifelse(hc_result$Child > 0, "Have Children", "No Children")
+hc_result$HaveChildren <- factor(hc_result$HaveChildren, levels = c("No Children", "Have Children"))
+hc_result$Child <- NULL
+```
+
+```{r}
+# Summary of numerical and categorical variable
+# Calculate the mean for numerical variable
+hc_num <- hc_result %>%
+  group_by(Cluster) %>%
+  summarise(across(where(is.numeric), ~mean(., na.rm = TRUE)),
+            .groups = 'drop')
+```
+```{r}
+# Calculate the proportion for the categorical variable
+hc_cat <- hc_result %>%
+  group_by(Cluster) %>%
+  summarise(
+    Basic_edu = mean(Education == 1, na.rm = TRUE),
+    Undegraduate_edu = mean(Education == 2, na.rm = TRUE),
+    Higher_edu = mean(Education == 3, na.rm = TRUE),
+    Single = mean(Marital_Status == 1, na.rm = TRUE),
+    Taken = mean(Marital_Status == 2, na.rm = TRUE),
+    No_Children = mean(HaveChildren == "No Children", na.rm = TRUE),
+    Have_Children = mean(HaveChildren == "Have Children", na.rm = TRUE),
+    .groups = 'drop'
+  )
+```
+```{r}
+hc_analysis <- inner_join(hc_num, hc_cat, by = "Cluster")
+hc_analysis
+```
+
+```{r}
+# Plot the dendogram
+plot(hc_final, main = "Cluster Dendoram", xlab = "", ylab = "Height")
+rect.hclust(hc_final, k = 3, border = 2:4)
+```
+
+```{r}
+fviz_cluster(list(data = cust_df_scaled, cluster = hc_cut),
+             geom = "point",
+             ellipse = TRUE, 
+             ellipse.type = "convex",
+             palette = c("pink", "skyblue", "turquoise"),
+             main = "Hierarchical Clustering") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+**REGRESSION**
+
+#Dataset link:
+#[link](https://www.kaggle.com/datasets/larsen0966/student-performance-data-set?select=student-por.csv)
+
+```{r}
+# Load the dataset
+por_grade <- read.csv("student-por.csv", header = TRUE)
+head(por_grade)
+```
+*The target variable for regression task: 'G3'.*
+
+# EXPLORATORY DATA ANALYSIS
+
+```{r}
+# Explore the data
+summary(por_grade)
+class(por_grade) # Ensuring the data structure is data frame
+```
+
+```{r}
+# Check for any missing values and duplicated values
+sum(is.na(por_grade))
+sum(duplicated(por_grade))
+```
+*Result: There are no missing values and duplicated values in the data.*
+
+```{r}
+# Copy the data and convert the categorical variables into factor data type
+por_grade_df <- por_grade
+por_grade_df[sapply(por_grade_df, is.character)] <- lapply(por_grade_df[sapply(por_grade_df, is.character)], as.factor)
+```
+
+```{r}
+# Convert numerical variables that are categorical into factor data type
+num <- c("Medu", "Fedu", "traveltime", "studytime", "famrel", "freetime", "goout", "Dalc", "Walc", "health")
+for (var in num) {
+  por_grade_df[[var]] <- as.factor(por_grade_df[[var]])
+}
+str(por_grade_df)
+```
+
+```{r}
+# Plot a correlation plot to see the correlation between variables
+cor_matrix2 <- cor(por_grade_df %>% mutate_if(is.factor, as.numeric))
+
+corrplot(cor_matrix2, 
+         method = "color", order = "hclust", type = "lower", 
+         addCoef.col = "black", number.cex = 0.6,
+         tl.col = "black", tl.srt = 45, tl.cex = 0.7,
+         sig.level = 0.01, diag = FALSE, 
+         addgrid.col = "gray" 
+)
+```
+*Result: It can be seen that the target variable (G3) has a high correlation with both G1 and G2. Therefore, to see other variables' effects on G3, we will generate 2 results for each regression model which are with and without G1 & G2.*
+
+```{r}
+# Check the distribution of the target variable (G3)
+# Boxplot for G3
+boxplot(por_grade_df$G3, main="Distribution of Final Grade (G3) in Portugese Class", ylab="G3", col="gray", border="black")
+```
+
+```{r}
+# Density plot for G3
+density_data <- density(por_grade_df$G3)
+y_max <- max(density_data$y)
+hist(por_grade_df$G3, main="Density Plot of G3", xlab="G3", ylab="Density", col="gray", border="black", prob=TRUE, ylim=c(0, y_max))
+lines(density_data, col="red", lwd=2)
+```
+*Result: From the analysis of both the boxplot and density plot of final Portuguese grades (G3), the distribution shows a roughly bell-shaped curve but with a visible left skew, indicating that it is left-skewed (negative skew). This skewness means that a larger number of students have scored on the lower end of the grade scale, The boxplot also points out outliers, signifying that there are students with grades that are substantially lower than others. However, we decide to keep them as they may provide valuable insights for predicting grades, especially for those at risk of underperforming.*
+
+```{r}
+# Split the dataset into train set and test set
+set.seed(2000)
+split1 <- sample.split(por_grade_df, 0.7)
+por_grade_train <- subset(por_grade_df, split1 == TRUE)
+por_grade_test <- subset(por_grade_df, split1 == FALSE)
+```
+
+# 1 LINEAR REGRESSION
+## 1.1 Model A (with G1 & G2)
+
+```{r}
+# Perform linear regression
+set.seed(2000)
+por_grade_lm1 <- lm(G3 ~ ., data = por_grade_train)
+summary(por_grade_lm1)
+```
+
+```{r}
+# Retrieve only the significant variables in predicting G3 (significance level = 0.05)
+summary_lm1 <- summary(por_grade_lm1)
+lm1_coef <- summary_lm1$coefficients[-1, ]
+sig_var1 <- lm1_coef[, "Pr(>|t|)"] < 0.05
+sig_coef1 <- lm1_coef[sig_var1, ]
+sig_coef1_df <- data.frame(
+  `Significant Variable` = rownames(sig_coef1),  
+  Coefficient = sig_coef1[, "Estimate"],
+  `P_Value` = sig_coef1[, "Pr(>|t|)"] 
+)
+rownames(sig_coef1_df) <- NULL
+sig_coef1_df
+```
+*Result: failures, Dalc4, G1, and G2 are the significant variables in predicting G3.*
+
+```{r}
+# Predict the model and compute the RMSE value on test set
+lm_predict1 <- predict(por_grade_lm1, newdata = por_grade_test)
+RMSE_lm_test1 <- RMSE(lm_predict1, por_grade_test$G3)
+RMSE_lm_test1
+```
+
+*We will proceed with backward elimination for feature selection, which allow us to identify the most significant predictors for the final model.*
+```{r}
+# Apply backward elimination
+por_grade_lm2 <- step(por_grade_lm1, direction = "backward")
+summary(por_grade_lm2)
+```
+```{r}
+por_grade_lm2$anova
+```
+```{r}
+por_grade_lm2$coefficients
+```
+*Result: After conducting backward elimination, we can see that only schoolMS, sexM, failures, famsupyes, Dalc2, Dalc3, Dalc4, Dalc5, G1, and G2 remain as the predictors.*
+
+```{r}
+# Perform diagnostic check
+par(mfrow = c(2,2))
+plot(por_grade_lm2)
+par(mfrow = c(1,1))
+```
+*Result: The diagnostic plots generally appear normal. However, the Residuals vs Fitted plot displays a distinct pattern, implying a potential non-linear relationship between the predictors and 'G3'. Nevertheless, the other plots indicate that the conditions for normally distributed residuals, constant variance, and the absence of of influential outliers beyond Cook's distance have been satisfied*
+
+```{r}
+# Retrieve only the significant variables in predicting G3 (significance level = 0.05)
+summary_lm2 <- summary(por_grade_lm2)
+lm2_coef <- summary_lm2$coefficients[-1, ]
+sig_var2 <- lm2_coef[, "Pr(>|t|)"] < 0.05
+sig_coef2 <- lm2_coef[sig_var2, ]
+sig_coef2_df <- data.frame(
+  `Significant Variable` = rownames(sig_coef2),  
+  Coefficient = sig_coef2[, "Estimate"],
+  `P-Value` = sig_coef2[, "Pr(>|t|)"] 
+)
+rownames(sig_coef2_df) <- NULL
+sig_coef2_df
+```
+*Result: sexM, failures, Dalc4, G1 and G2 are the significant variables in predicting G3.*
+
+```{r}
+# Predict the model using test set and compute the test set RMSE value of backward elimination based linear regression model
+lm_predict2 <- predict(por_grade_lm2, newdata = por_grade_test)
+RMSE_lm_test2 <- RMSE(lm_predict2, por_grade_test$G3)
+RMSE_lm_test2
+```
+
+## 1.2 Model B (without G1 & G2)
+
+```{r}
+# Perform linear regression
+por_grade_lm3 <- lm(G3 ~ . - G1 - G2, data = por_grade_train)
+summary(por_grade_lm3)
+```
+
+```{r}
+# Retrieve only the significant variables in predicting G3 (significance level = 0.05)
+summary_lm3 <- summary(por_grade_lm3)
+lm3_coef <- summary_lm3$coefficients[-1, ]
+sig_var3 <- lm3_coef[, "Pr(>|t|)"] < 0.05
+sig_coef3 <- lm3_coef[sig_var3, ]
+sig_coef3_df <- data.frame(
+  `Significant Variable` = rownames(sig_coef3),  
+  Coefficient = sig_coef3[, "Estimate"],
+  `P-Value` = sig_coef3[, "Pr(>|t|)"] 
+)
+rownames(sig_coef3_df) <- NULL
+sig_coef3_df
+```
+*Result: schoolMS, sexM, studytime3, failures, schoolsupyes, higheryes, Dalc4, and health5 are the significant variables in predicting G3.*
+
+```{r}
+# Predict the model and compute the RMSE value on test set
+lm_predict3 <- predict(por_grade_lm3, newdata = por_grade_test)
+RMSE_lm_test3 <- RMSE(lm_predict3, por_grade_test$G3)
+RMSE_lm_test3
+```
+
+*We will proceed with backward elimination to identify the most significant predictors for the final model.*
+```{r}
+# Apply backward elimination
+por_grade_lm4 <- step(por_grade_lm3, direction = "backward")
+summary(por_grade_lm4)
+```
+```{r}
+por_grade_lm4$anova
+```
+```{r}
+por_grade_lm4$coefficients
+```
+*Result: After conducting backward elimination in the model without G1 and G2, we can see that fewer variables are eliminated compared to the model with G1 and G2. This suggest that G1 and G2 have significant explanatory variables that they overshadowed the significance of other variables. Without G1 and G2, the remaining variables now contribute more noticeably in explaining the variation in G3.*
+
+```{r}
+# Plot diagnostic plot
+par(mfrow = c(2,2))
+plot(por_grade_lm4)
+par(mfrow = c(1,1))
+```
+*Result: The assumption of linearity and homoscedasticity may be violated, as evidence by the patterns in the Residuals vs Fitted and Scale-Location plots. However, the Normal Q-Q and Residuals vs Leverage plots satisfy their respective assumptions, displaying normally distributed residuals and the absence of influential outliers.*
+
+```{r}
+# Retrieve only the significant variables in predicting G3 (significance level = 0.05)
+summary_lm4 <- summary(por_grade_lm4)
+lm4_coef <- summary_lm4$coefficients[-1, ]
+sig_var4 <- lm4_coef[, "Pr(>|t|)"] < 0.05
+sig_coef4 <- lm4_coef[sig_var4, ]
+sig_coef4_df <- data.frame(
+  `Significant Variable` = rownames(sig_coef4),  
+  Coefficient = sig_coef4[, "Estimate"],
+  `P-Value` = sig_coef4[, "Pr(>|t|)"] 
+)
+rownames(sig_coef4_df) <- NULL
+sig_coef4_df
+```
+*Result: schoolMS, sexM, studytime3, failures, schoolsupyes, higheryes, famrel4, Dalc4, and health5 are the significant variables in predicting G3.*
+
+```{r}
+# Predict the model using test set and compute the test set RMSE value of backward elimination based linear regression model
+lm_predict4 <- predict(por_grade_lm4, newdata = por_grade_test)
+RMSE_lm_test4 <- RMSE(lm_predict4, por_grade_test$G3)
+RMSE_lm_test4
+```
+
+# 2 REGULARIZATION METHODS
+
+```{r}
+# Convert factors into dummy variables and prepare the predictor matrix and target variable as required by glmnet
+por_grade_matrix_1 <- model.matrix(G3 ~ . -1, data = por_grade_df) # Model with G1 & G2
+por_grade_matrix_2 <- model.matrix(G3 ~ . - G1 - G2 - 1, data = por_grade_df)
+class(por_grade_matrix_1) # Ensuring that it is a matrix now
+class(por_grade_matrix_2)
+```
+```{r}
+x1 <- por_grade_matrix_1
+x2 <- por_grade_matrix_2
+y <- por_grade_df$G3
+```
+
+```{r}
+# Define the train set and test set
+x_train1 <- model.matrix(G3 ~ . - 1, data = por_grade_train)
+x_train2 <- model.matrix(G3 ~ . - G1 - G2 - 1, data = por_grade_train)
+y_train <- por_grade_train$G3
+
+x_test1 <- model.matrix(G3 ~ . - 1, data = por_grade_test)
+x_test2 <- model.matrix(G3 ~ . - G1 - G2 - 1, data = por_grade_test)
+y_test <- por_grade_test$G3
+```
+
+```{r}
+# Define the range of the lambda values for model fitting
+grid <- 10^seq(10, -2, length = 100)
+```
+
+## 2.1 RIDGE REGRESSION
+### 2.1.1 Model A (with G1 & G2)
+
+```{r}
+# Perform ridge regression
+set.seed(2000)  
+por_grade_rd1 <- glmnet(alpha = 0, x = x_train1, y = y_train, lambda = grid)
+cv_rd1 <- cv.glmnet(x = x_train1, y = y_train, alpha = 0)
+cv_rd1
+```
+
+```{r}
+# Examine the cross-validation plot and determine the best lambda value
+plot(cv_rd1)
+best_lambda_rd1 <- cv_rd1$lambda.min
+cat("Best lambda for Ridge: ", best_lambda_rd1, "\n")
+```
+*Result : Best lambda for Ridge:  0.2991972.*
+
+```{r}
+# Ridge coefficient
+out_rd1 <- glmnet(x1, y, alpha = 0, lambda = grid)
+coef_rd1 <- predict(out_rd1, type = "coefficients", s = best_lambda_rd1)
+coef_rd1
+```
+*Result: It can be seen from the magnitude of the coefficients that G2 are the most significant variable, followed by G1. In absolute terms, Dalc4 and reasonother are significant. Note that the negative sign indicates they are inversely related to the target variable, for example, Dalc4 indicates that higher daily alcohol consumption lead to lower students grade.*
+
+```{r}
+# Predict the model using test set and get the RMSE test value
+rd_predict1 <- predict(por_grade_rd1, newx = x_test1, s = best_lambda_rd1)
+RMSE_rd_test1 <- sqrt(mean((rd_predict1 - y_test) ^ 2))
+RMSE_rd_test1
+```
+
+### 2.1.2 Model B (without G1 & G2)
+
+```{r}
+# Perform ridge regression
+set.seed(2000)  
+por_grade_rd2 <- glmnet(alpha = 0, x = x_train2, y = y_train, lambda = grid)
+cv_rd2 <- cv.glmnet(x = x_train2, y = y_train, alpha = 0)
+cv_rd2
+```
+
+```{r}
+# Examine the cross-validation plot and determine the best lambda value
+plot(cv_rd2)
+best_lambda_rd2 <- cv_rd2$lambda.min
+cat("Best lambda for Ridge: ", best_lambda_rd2, "\n")
+```
+*Result: Best lambda for Ridge:  2.204109.*
+
+```{r}
+# Ridge coefficient
+out_rd2 <- glmnet(x2, y, alpha = 0, lambda = grid)
+coef_rd2 <- predict(out_rd2, type = "coefficients", s = best_lambda_rd2)
+coef_rd2
+```
+*Result: higheryes followed by studytime3 have the largest positive coefficients. On the negative side, failures and Dalc4 are the significant variables.*
+
+```{r}
+# Predict the model using test set and get the RMSE test value
+rd_predict2 <- predict(por_grade_rd2, newx = x_test2, s = best_lambda_rd2)
+RMSE_rd_test2 <- sqrt(mean((rd_predict2 - y_test) ^ 2))
+RMSE_rd_test2
+```
+
+## 2.2 LASSO REGRESSION
+### 2.2.1 Model A (with G1 & G2)
+
+```{r}
+# Perform lasso regression
+set.seed(2000)  
+por_grade_ls1 <- glmnet(alpha = 1, x = x_train1, y = y_train, lambda = grid)
+cv_ls1 <- cv.glmnet(x = x_train1, y = y_train, alpha = 1)
+cv_ls1
+```
+
+```{r}
+# Examine the cross-validation plot and determine the best lambda value
+plot(cv_ls1)
+best_lambda_ls1 <- cv_ls1$lambda.min
+cat("Best lambda for Lasso: ", best_lambda_ls1, "\n")
+```
+*Result: Best lambda for Lasso:  0.1050539.*
+
+```{r}
+# Lasso coefficient
+out_ls1 <- glmnet(x1, y, alpha = 1, lambda = grid)
+coef_ls1 <- predict(out_ls1, type = "coefficients", s = best_lambda_ls1)
+coef_ls1
+```
+*Result: G2 and G1 have strong positive predictive importance for the target variable. Whereas, reasonother and Dalc4 have the largest negative impact.*
+
+```{r}
+# Predict the model using test set and get the RMSE test value
+ls_predict1 <- predict(por_grade_ls1, newx = x_test1, s = best_lambda_ls1)
+RMSE_ls_test1 <- sqrt(mean((ls_predict1 - y_test) ^ 2))
+RMSE_ls_test1
+```
+
+### 2.2.2 Model B (without G1 & G2)
+
+```{r}
+# Perform lasso regression
+set.seed(2000)  
+por_grade_ls2 <- glmnet(alpha = 1, x = x_train2, y = y_train, lambda = grid)
+cv_ls2 <- cv.glmnet(x = x_train2, y = y_train, alpha = 1)
+cv_ls2
+```
+
+```{r}
+# Examine the cross-validation plot and determine the best lambda value
+plot(cv_ls2)
+best_lambda_ls2 <- cv_ls2$lambda.min
+cat("Best lambda for Lasso: ", best_lambda_ls2, "\n")
+```
+*Result: Best lambda for Lasso:  0.1450157.*
+
+```{r}
+# Lasso coefficient
+out_ls2 <- glmnet(x2, y, alpha = 1, lambda = grid)
+coef_ls2 <- predict(out_ls2, type = "coefficients", s = best_lambda_ls2)
+coef_ls2
+```
+*Result: higheryes followed by schoolGP have the largest positive coefficients. On the negative side, failures and Dalc4 are the significant variables.*
+
+```{r}
+# Predict the model using test set and get the RMSE test value
+ls_predict2 <- predict(por_grade_ls2, newx = x_test2, s = best_lambda_ls2)
+RMSE_ls_test2 <- sqrt(mean((ls_predict2 - y_test) ^ 2))
+RMSE_ls_test2
+```
+
+# 3 RANDOM FOREST
+## 3.1 Model A (with G1 & G2)
+
+```{r}
+# Perform random forest
+set.seed(2000)
+por_grade_rf1 <- randomForest(G3 ~., por_grade_train, ntree = 500, type = "regression", importance = T)
+por_grade_rf1
+```
+
+```{r}
+# Predict the model using test set and derive the RMSE value
+rf_predict1 <- predict(por_grade_rf1, por_grade_test)
+RMSE_rf_test1 <- RMSE(rf_predict1, por_grade_test$G3)
+RMSE_rf_test1
+```
+
+```{r}
+# Find the important factors on predicting G3
+varimp_rf1 <- varImp(por_grade_rf1, scale = TRUE)
+varimp_rf1
+```
+```{r}
+varImpPlot(por_grade_rf1)
+```
+*Result: G2, G1, absences, failures, and school are the top 5 most important variables. Other variables have low or no influence on G3.*
+
+## 3.2 Model B (without G1 & G2)
+
+```{r}
+# Perform random forest
+set.seed(2000)
+por_grade_rf2 <- randomForest(G3 ~ . -G1 -G2, por_grade_train, ntree = 500, type = "regression", importance = T)
+por_grade_rf2
+```
+
+```{r}
+# Predict the model using test set and derive the RMSE value
+rf_predict2 <- predict(por_grade_rf2, por_grade_test)
+RMSE_rf_test2 <- RMSE(rf_predict2, por_grade_test$G3)
+RMSE_rf_test2
+```
+
+```{r}
+# Find the important factors on predicting G3
+varimp_rf2 <- varImp(por_grade_rf2, scale = TRUE)
+varimp_rf2
+```
+```{r}
+varImpPlot(por_grade_rf2)
+```
+*Result: failures, school, higher, schoolsup, and Dalc are the top 5 most important variables.*
+
+# 4 CART (Classification and Regression Tree)
+## 4.1 Model A (with G1 & G2)
+
+```{r}
+# Grow tree to the maximum tree
+set.seed(2000)
+por_grade_cart1 <- rpart(G3 ~ ., data = por_grade_train, method = "anova", control = rpart.control(minsplit = 2, cp = 0))
+summary(por_grade_cart1)
+```
+```{r}
+printcp(por_grade_cart1)
+```
+```{r}
+plotcp(por_grade_cart1) 
+```
+
+```{r}
+# Determine optimal cp and prune the CART model based on minimum cross-validation error (xerror)
+# Extract the optimal tree
+opt_cp_me1 <- por_grade_cart1$cptable[which.min(por_grade_cart1$cptable[, "xerror"]), "CP"]
+```
+```{r}
+# Prune the tree using the optimal cp
+por_grade_cart_me1 <- prune(por_grade_cart1, cp = opt_cp_me1)
+printcp(por_grade_cart_me1)
+```
+```{r}
+rpart.plot(por_grade_cart_me1, nn = TRUE, main = "Decision Tree Model Based On Minimum Error")
+```
+
+```{r}
+# Determine optimal cp and prune the CART model optimized by 1SE (Standard Errror) rule
+# Compute min CVerror + 1SE in maximal tree por_grade_cart1
+CVerror.cap <- por_grade_cart1$cptable[which.min(por_grade_cart1$cptable[,"xerror"]), "xerror"] + por_grade_cart1$cptable[which.min(por_grade_cart1$cptable[,"xerror"]), "xstd"]
+```
+```{r}
+# Find the optimal CP region whose CV error is just below CVerror.cap in maximal tree por_grade_cart1.
+i <- 1; j<- 4
+while (por_grade_cart1$cptable[i,j] > CVerror.cap){
+  i <- i + 1
+}
+```
+```{r}
+# Get geometric mean of the two identified CP values in the optimal region if optimal tree has at least one split.
+opt_cp_se1 = ifelse(i > 1, sqrt(por_grade_cart1$cptable[i,1] * por_grade_cart1$cptable[i-1,1]), 1)
+```
+```{r}
+# Prune the max tree
+por_grade_cart_se1 <- prune(por_grade_cart1, cp = opt_cp_se1)
+printcp(por_grade_cart_se1)
+```
+```{r}
+rpart.plot(por_grade_cart_se1, nn = TRUE, main = "Decision Tree Model Using 1SE Rule")
+```
+
+```{r}
+# Create model predictions with both pruned models and calculate their RMSE to compare their performances
+cart_predict1.1 <- predict(por_grade_cart_me1, newdata = por_grade_test)
+RMSE_cart_test1.1 <- sqrt(mean((cart_predict1.1 - por_grade_test$G3)^2))
+RMSE_cart_test1.1
+```
+```{r}
+cart_predict1.2 <- predict(por_grade_cart_se1, newdata = por_grade_test)
+RMSE_cart_test1.2 <- sqrt(mean((cart_predict1.2 - por_grade_test$G3)^2))
+RMSE_cart_test1.2
+```
+
+```{r}
+# Checking the variable importance
+por_grade_cart_me1$variable.importance
+```
+*Result: G2, G1, school, Medu, Fedu, failures, reason, absences, famrel, goout, studytime, and Dalc are the important variables in predicting G3.*
+```{r}
+por_grade_cart_se1$variable.importance
+```
+*Result: G2, G1, school, Medu, fedu, failures, famrel, absences, and Dalc are the important variables in predicting G3.*
+
+## 4.2 Model B (without G1 & G2)
+
+```{r}
+# Grow tree to the maximum tree
+set.seed(2000)
+por_grade_cart2 <- rpart(G3 ~ . - G1 - G2, data = por_grade_train, method = "anova", control = rpart.control(minsplit = 2, cp = 0))
+summary(por_grade_cart2)
+```
+```{r}
+printcp(por_grade_cart2) 
+```
+```{r}
+plotcp(por_grade_cart2) 
+```
+
+```{r}
+# Determine optimal cp and prune the CART model based on minimum cross-validation error (xerror)
+# Extract the optimal tree
+opt_cp_me2 <- por_grade_cart2$cptable[which.min(por_grade_cart2$cptable[, "xerror"]), "CP"]
+```
+```{r}
+# Prune the tree using the optimal cp
+por_grade_cart_me2 <- prune(por_grade_cart2, cp = opt_cp_me2)
+printcp(por_grade_cart_me2)
+```
+```{r}
+rpart.plot(por_grade_cart_me2, nn = TRUE, main = "Decision Tree Model Based On Minimum Error")
+```
+
+```{r}
+# Determine optimal cp and prune the CART model optimized by 1SE (Standard Errror) rule
+# Compute min CVerror + 1SE in maximal tree por_grade_cart1
+CVerror.cap <- por_grade_cart2$cptable[which.min(por_grade_cart2$cptable[,"xerror"]), "xerror"] + por_grade_cart2$cptable[which.min(por_grade_cart2$cptable[,"xerror"]), "xstd"]
+```
+```{r}
+# Find the optimal CP region whose CV error is just below CVerror.cap in maximal tree por_grade_cart2.
+i <- 1; j<- 4
+while (por_grade_cart2$cptable[i,j] > CVerror.cap){
+  i <- i + 1
+}
+```
+```{r}
+# Get geometric mean of the two identified CP values in the optimal region if optimal tree has at least one split.
+opt_cp_se2 = ifelse(i > 1, sqrt(por_grade_cart2$cptable[i,1] * por_grade_cart2$cptable[i-1,1]), 1)
+```
+```{r}
+# Prune the max tree
+por_grade_cart_se2 <- prune(por_grade_cart2, cp = opt_cp_se2)
+printcp(por_grade_cart_se2)
+```
+```{r}
+rpart.plot(por_grade_cart_se2, nn = TRUE, main = "Decision Tree Model Using 1SE Rule")
+```
+
+```{r}
+# Create model predictions with both pruned models and calculate their RMSE to compare their performances
+cart_predict2.1 <- predict(por_grade_cart_me2, newdata = por_grade_test)
+RMSE_cart_test2.1 <- sqrt(mean((cart_predict2.1 - por_grade_test$G3)^2))
+RMSE_cart_test2.1
+```
+```{r}
+cart_predict2.2 <- predict(por_grade_cart_se2, newdata = por_grade_test)
+RMSE_cart_test2.2 <- sqrt(mean((cart_predict2.2 - por_grade_test$G3)^2))
+RMSE_cart_test2.2
+```
+*In CART model without G1 and G2, it can be seen that decision trees produced by both the minimum error method and the 1 SE rule are identical, with matching RMSE values. This suggests that the model has reached an optimal level of simplicity. Specifically, increasing the model complexity by adding more splits does not improve cross-validation performance. The model  has a good balance between model complexity and predictive accuracy.*
+
+```{r}
+# Checking the variable importance
+por_grade_cart_me2$variable.importance
+```
+*Result: failures, age, guardian, and higher are the important variables in predicting G3.*
+```{r}
+por_grade_cart_se2$variable.importance
+```
+*Result: failure, age, guardian, and higher are the important variables in predicting G3.*
+
+# MODEL COMPARISON (USING RMSE VALUES)
+
+```{r}
+# Creating a data frame
+mc_r <- data.frame(
+  Model = c("Linear Regression", "Linear Regression Backward Elimination", "Ridge Regression", "Lasso Regression", "Random Forest", "CART using Minimum Error", "CART using 1SE Rule"),
+  `RMSE Test Value for Model A` = c(RMSE_lm_test1, RMSE_lm_test2, RMSE_rd_test1, RMSE_ls_test1, RMSE_rf_test1, RMSE_cart_test1.1, RMSE_cart_test1.2),
+  `RMSE Test Value for Model B` = c(RMSE_lm_test3, RMSE_lm_test4, RMSE_rd_test2, RMSE_ls_test2, RMSE_rf_test2, RMSE_cart_test2.1, RMSE_cart_test2.2)
+)
+mc_r
+```
+
+```{r}
+# Visualize model comparison
+mc_r_long <- pivot_longer(mc_r, 
+                          cols = -Model, 
+                          names_to = "Variable", values_to = "RMSE")
+
+ggplot(mc_r_long, aes(x = Model, y = RMSE, fill = Variable)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
+  geom_text(aes(label = sprintf("%.2f", RMSE)), 
+            position = position_dodge(width = 0.9), vjust = -0.25, color = "black", size = 3) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+        plot.title = element_text(hjust = 0.5)) + 
+  labs(x = "Model", y = "RMSE Values", title = "Comparison of RMSE Values Across Models") +
+  scale_fill_brewer(palette = "Pastel1", name = "Model Configuration") +
+  guides(fill = guide_legend(title = "RMSE Values For:"))
+```
+
+**CLASSIFICATION**
+
+#Dataset link:
+#[link](https://www.kaggle.com/datasets/uciml/pima-indians-diabetes-database)
+
+```{r}
+# Load the dataset
+diabetes_df <- read.csv("diabetes.csv", header = TRUE)
+head(diabetes_df)
+```
+
+```{r}
+# Rename the column "Outcome" to "Diabetes" where 1 means yes and 0 means no
+diabetes_df <- diabetes_df %>%
+  rename("Diabetes" = "Outcome")
+```
+```{r}
+# Convert the binary variable into factor datatype
+diabetes_df$Diabetes <- as.factor(diabetes_df$Diabetes)
+str(diabetes_df)
+```
+*The target variable for classification task: 'Diabetes'.*
+
+# EXPLORATORY DATA ANALYSIS
+
+```{r}
+# Explore the data
+summary(diabetes_df)
+class(diabetes_df)
+```
+
+```{r}
+# Check for any missing values and duplicated values
+sum(is.na(diabetes_df))
+sum(duplicated(diabetes_df))
+```
+*There are no missing values and duplicated values in the data.*
+
+```{r}
+# Check and calculate for any 0 values in "Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI" variables since it isn't medically possible for these variables to be 0. 
+cat("Number of zero values in BloodPressure:", sum(diabetes_df$BloodPressure == 0), "\n")
+cat("Number of zero values in Glucose:", sum(diabetes_df$Glucose == 0), "\n")
+cat("Number of zero values in SkinThickness:", sum(diabetes_df$SkinThickness == 0), "\n")
+cat("Number of zero values in Insulin:", sum(diabetes_df$Insulin == 0), "\n")
+cat("Number of zero values in BMI:", sum(diabetes_df$BMI == 0), "\n")
+```
+*Note that it is possible for pregnancies to have 0 values in it. Also, for DiabetesPedigreeFunction and Age variables, their min values are not zero. Thus, we do not need to handle those variables.*
+
+```{r}
+# Look at the distribution of the variables: "Glucose", "BloodPressure", "SkinThickness", "Insulin", and "BMI"
+# Reshaping the data to a long format
+long_var <- reshape2::melt(diabetes_df, measure.vars = c("Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI"))
+
+# Creating a combined density plot
+ggplot(long_var, aes(x = value, fill = variable)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal()
+```
+*The density plots show that "Glucose", "BloodPressure", and "BMI" variables are roughly normally distributed, while "SkinThickness" and "Insulin" are skewed. Therefore, we will use mean imputation for the normally distributed variables and median imputation for the skewed ones, as the median is less affected by outliers and skewness.*
+
+```{r}
+# Perform the imputation
+# Mean imputation for Glucose, BloodPressure, and BMI
+diabetes_df$Glucose[diabetes_df$Glucose == 0] <- mean(diabetes_df$Glucose[diabetes_df$Glucose > 0], na.rm = TRUE)
+diabetes_df$BloodPressure[diabetes_df$BloodPressure == 0] <- mean(diabetes_df$BloodPressure[diabetes_df$BloodPressure > 0], na.rm = TRUE)
+diabetes_df$BMI[diabetes_df$BMI == 0] <- mean(diabetes_df$BMI[diabetes_df$BMI > 0], na.rm = TRUE)
+
+# Median imputation for SkinThickness and Insulin
+diabetes_df$SkinThickness[diabetes_df$SkinThickness == 0] <- median(diabetes_df$SkinThickness[diabetes_df$SkinThickness > 0], na.rm = TRUE)
+diabetes_df$Insulin[diabetes_df$Insulin == 0] <- median(diabetes_df$Insulin[diabetes_df$Insulin > 0], na.rm = TRUE)
+```
+
+```{r}
+# Ensure no 0 values
+cat("Number of zero values in BloodPressure:", sum(diabetes_df$BloodPressure == 0), "\n")
+cat("Number of zero values in Glucose:", sum(diabetes_df$Glucose == 0), "\n")
+cat("Number of zero values in SkinThickness:", sum(diabetes_df$SkinThickness == 0), "\n")
+cat("Number of zero values in Insulin:", sum(diabetes_df$Insulin == 0), "\n")
+cat("Number of zero values in BMI:", sum(diabetes_df$BMI == 0), "\n")
+```
+
+```{r}
+# Explore each variable
+# Pregnancy
+h_preg <- ggplot(diabetes_df, aes(x = Pregnancies)) +
+  geom_histogram(binwidth = 1, fill = "gray", color = "black") +
+  labs(title = "Distribution of Pregnancies", x = "Pregnancies", y = "Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+b_preg <- ggplot(diabetes_df, aes(x = Diabetes, y = Pregnancies, fill = Diabetes)) +
+  geom_boxplot() +
+  labs(title = "Pregnancies Distribution by Diabetes Outcome", x = "Diabetes Outcome", y = "Pregnancies") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+grid.arrange(h_preg, b_preg, ncol = 2)
+```
+```{r}
+# Glucose
+h_glucose <- ggplot(diabetes_df, aes(x = Glucose)) +
+  geom_histogram(binwidth = 10, fill = "gray", color = "black") +
+  labs(title = "Distribution of Glucose", x = "Glucose", y = "Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+b_glucose <- ggplot(diabetes_df, aes(x = Diabetes, y = Glucose, fill = Diabetes)) +
+  geom_boxplot() +
+  labs(title = "Glucose Distribution by Diabetes Outcome", x = "Diabetes Outcome", y = "Glucose") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+grid.arrange(h_glucose, b_glucose, ncol = 2)
+```
+```{r}
+# Blood Pressure
+h_bp <- ggplot(diabetes_df, aes(x = BloodPressure)) +
+  geom_histogram(binwidth = 5, fill = "gray", color = "black") +
+  labs(title = "Distribution of Blood Pressure", x = "Blood Pressure", y = "Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+b_bp <- ggplot(diabetes_df, aes(x = Diabetes, y = BloodPressure, fill = Diabetes)) +
+  geom_boxplot() +
+  labs(title = "Blood Pressure Distribution by Diabetes Outcome", x = "Diabetes Outcome", y = "Blood Pressure") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+grid.arrange(h_bp, b_bp, ncol = 2)
+```
+```{r}
+# Skin Thickness
+h_st <- ggplot(diabetes_df, aes(x = SkinThickness)) +
+  geom_histogram(binwidth = 5, fill = "gray", color = "black") +
+  labs(title = "Distribution of Skin Thickness", x = "Skin Thickness", y = "Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+b_st <- ggplot(diabetes_df, aes(x = Diabetes, y = SkinThickness, fill = Diabetes)) +
+  geom_boxplot() +
+  labs(title = "Skin Thickness Distribution by Diabetes Outcome", x = "Diabetes Outcome", y = "Skin Thickness") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+grid.arrange(h_st, b_st, ncol = 2)
+```
+```{r}
+# Insulin
+h_insulin <- ggplot(diabetes_df, aes(x = Insulin)) +
+  geom_histogram(binwidth = 30, fill = "gray", color = "black") +
+  labs(title = "Distribution of Insulin", x = "Insulin", y = "Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+b_insulin <- ggplot(diabetes_df, aes(x = Diabetes, y = Insulin, fill = Diabetes)) +
+  geom_boxplot() +
+  labs(title = "Insulin Distribution by Diabetes Outcome", x = "Diabetes Outcome", y = "Insulin") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+grid.arrange(h_insulin, b_insulin, ncol = 2)
+```
+```{r}
+# BMI
+h_bmi <- ggplot(diabetes_df, aes(x = BMI)) +
+  geom_histogram(binwidth = 2, fill = "gray", color = "black") +
+  labs(title = "Distribution of BMI", x = "BMI", y = "Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+b_bmi <- ggplot(diabetes_df, aes(x = Diabetes, y = BMI, fill = Diabetes)) +
+  geom_boxplot() +
+  labs(title = "BMI Distribution by Diabetes Outcome", x = "Diabetes Outcome", y = "BMI") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+grid.arrange(h_bmi, b_bmi, ncol = 2)
+```
+```{r}
+# Diabetes Pedigree Function
+h_dpf <- ggplot(diabetes_df, aes(x = DiabetesPedigreeFunction)) +
+  geom_histogram(fill = "gray", color = "black") +
+  labs(title = "Distribution of Diabetes Pedigree Function", x = "Diabetes Pedigree Function", y = "Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+b_dpf <- ggplot(diabetes_df, aes(x = Diabetes, y = DiabetesPedigreeFunction, fill = Diabetes)) +
+  geom_boxplot() +
+  labs(title = "Diabetes Pedigree Function Distribution by Diabetes Outcome", x = "Diabetes Outcome", y = "Diabetes Pedigree Function") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+grid.arrange(h_dpf, b_dpf, ncol = 2)
+```
+```{r}
+# Age
+h_age <- ggplot(diabetes_df, aes(x = Age)) +
+  geom_histogram(binwidth = 5, fill = "gray", color = "black") +
+  labs(title = "Distribution of Age", x = "Age", y = "Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+b_age <- ggplot(diabetes_df, aes(x = Diabetes, y = Age, fill = Diabetes)) +
+  geom_boxplot() +
+  labs(title = "Age Distribution by Diabetes Outcome", x = "Diabetes Outcome", y = "Age") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 9, hjust = 0.5))
+
+grid.arrange(h_age, b_age, ncol = 2)
+```
+*Result: After analyzing the distribution of all the predictor variables, a pattern seems to emerge. Mostly, individuals with diabetes present higher median values in the predictor variables compared to those without diabetes. This suggests a possible association where the diagnosed group tends to exhibit higher values of the assessed health metrics. However, note that outliers often occur in the non-diabetic group, indicating that high values of the predictor variables can also be observed in individuals without a diabetes diagnosis.*
+
+```{r}
+# See the distribution for the target variable (diabetes)
+h_diabetes <- ggplot(diabetes_df, aes(x = Diabetes)) +
+  geom_bar(fill = "pink", color = "black") +
+  labs(title = "Distribution of Diabetes", x = "Diabetes Outcome", y = "Frequency") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+h_diabetes
+```
+*Result: It appears that the number of individuals without diabetes (indicated by 0) is substantially higher than the number of individuals with diabetes (indicated by 1).*
+
+```{r}
+# See the correlation between each variable
+pairs(~ . , panel=panel.smooth, data = diabetes_df, main = "Scatterplot Matrix of Diabetes Data")
+```
+```{r}
+# Heatmap
+cor_matrix3 <- cor(diabetes_df %>% mutate_if(is.factor, as.numeric))
+cor_melt <- melt(cor_matrix3)
+
+ggplot(data = cor_melt, aes(Var1, Var2, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", value)), color = "black", size = 4) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  labs(fill = "Correlation")
+```
+*Result: No significant correlation exists among the variables, indicating that multicollinearity is not a concern. We can proceed to perform classification tasks now.*
+
+```{r}
+# Split the dataset into train set and test set
+set.seed(3000)
+split2 <- createDataPartition(diabetes_df$Diabetes, p = 0.7, list = FALSE, times = 1)
+diabetes_train <- diabetes_df[split2, ]
+diabetes_test <- diabetes_df[-split2, ]
+```
+
+# 1 LOGISTIC REGRESSION
+
+```{r}
+# Build logistic regression model
+diabetes_lg1 <- glm(Diabetes ~ ., family = "binomial", data = diabetes_train)
+summary(diabetes_lg1)
+```
+
+```{r}
+# Optimize Model with stepAIC
+diabetes_lg2 <- stepAIC(diabetes_lg1, direction = "both")
+summary(diabetes_lg2)
+```
+*Result: All variables are significant here, we will use this model as the final model.*
+
+```{r}
+# Odds Ratio Confidence Interval
+OR_CI <- exp(confint(diabetes_lg2, level = 0.95))
+OR_CI
+```
+*Result: In the 95% confidence interval for odds ratios of all variables, 1 do not included, indicating they are statistically significant in predicting diabetes.*
+
+```{r}
+# Predictions on test set
+lg_predict_prob <- predict(diabetes_lg2, newdata = diabetes_test, type = "response")
+# Convert probabilities to binary predictions based on a threshold of 0.5
+lg_predict_class <- ifelse(lg_predict_prob > 0.5, 1, 0)
+```
+
+```{r}
+# Confusion Matrix
+lg_cm <- confusionMatrix(factor(lg_predict_class), diabetes_test$Diabetes)
+lg_cm
+```
+
+```{r}
+# Plot ROC and calculate AUC
+lg_roc <- roc(response = diabetes_test$Diabetes, predictor = lg_predict_prob, plot = TRUE, print.auc = TRUE)
+lg_roc
+```
+
+```{r}
+# Analyze the model performance
+lg_accuracy <- lg_cm$overall['Accuracy']
+lg_precision <- lg_cm$byClass['Pos Pred Value']
+lg_sensitivity <- lg_cm$byClass['Sensitivity']
+lg_f1score <- 2 * (lg_precision * lg_sensitivity) / (lg_precision + lg_sensitivity)
+lg_auc <- lg_roc$auc
+```
+```{r}
+lg_performance <- data.frame(
+  Model = "Logistic Regression",
+  Accuracy = lg_accuracy,
+  Precision = lg_precision,
+  Sensitivity = lg_sensitivity,
+  F1_Score = lg_f1score,
+  AUC = lg_auc,
+  row.names = NULL
+)
+lg_performance
+```
+
+# 2 RANDOM FOREST
+
+```{r}
+# Build Random Forest model
+set.seed(3000) 
+diabetes_rf <- randomForest(Diabetes ~ ., data = diabetes_train, ntree = 500, importance = T)
+diabetes_rf
+```
+
+```{r}
+# Predict class labels for test set
+rf_predict_class <- predict(diabetes_rf, newdata = diabetes_test, type = "class")
+
+# Predict class probabilities
+rf_predict_prob <- predict(diabetes_rf, newdata = diabetes_test, type = "prob")[,2]
+```
+
+```{r}
+# Confusion Matrix
+rf_cm <- confusionMatrix(rf_predict_class, diabetes_test$Diabetes)
+rf_cm
+```
+
+```{r}
+# Plot ROC
+rf_roc <- roc(response = diabetes_test$Diabetes, predictor = rf_predict_prob, plot = TRUE, print.auc = TRUE)
+rf_roc
+```
+
+```{r}
+# Analyze the model performance
+rf_accuracy <- rf_cm$overall['Accuracy']
+rf_precision <- rf_cm$byClass['Pos Pred Value']
+rf_sensitivity <- rf_cm$byClass['Sensitivity']
+rf_f1score <- 2 * (rf_precision * rf_sensitivity) / (rf_precision + rf_sensitivity)
+rf_auc <- rf_roc$auc
+```
+```{r}
+rf_performance <- data.frame(
+  Model = "Random Forest",
+  Accuracy = rf_accuracy,
+  Precision = rf_precision,
+  Sensitivity = rf_sensitivity,
+  F1_Score = rf_f1score,
+  AUC = rf_auc,
+  row.names = NULL
+)
+rf_performance
+```
+
+
+```{r}
+# Variable Importance
+varimp_rf <- varImp(diabetes_rf, scale = TRUE)
+varimp_rf
+```
+```{r}
+varImpPlot(diabetes_rf)
+```
+*Result: Glucose, BMI, and Age are the top 3 most important variables in predicting Diabetes.*
+
+# 3 DECISION TREE (CART)
+
+```{r}
+# Build Decision Tree model
+set.seed(3000)
+diabetes_cart <- rpart(Diabetes ~ ., data = diabetes_train, method = 'class', control = rpart.control(minsplit = 2, cp = 0))
+```
+
+```{r}
+printcp(diabetes_cart)
+```
+```{r}
+plotcp(diabetes_cart)
+```
+
+```{r}
+# Determine optimal cp and prune the CART model based on minimum cross-validation error
+# Extract the optimal tree
+optimal_cp <- diabetes_cart$cptable[which.min(diabetes_cart$cptable[, "xerror"]), "CP"]
+```
+```{r}
+# Prune the tree using the optimal cp
+diabetes_cart_pruned <- prune(diabetes_cart, cp = optimal_cp)
+```
+
+```{r}
+rpart.plot(diabetes_cart_pruned, nn = TRUE, main = "Decision Tree Model for Classification")
+```
+
+```{r}
+# Predict class labels on the test set
+cart_predict_class <- predict(diabetes_cart_pruned, newdata = diabetes_test, type = "class")
+
+# Predict probabilities for ROC curve analysis
+cart_predict_prob <- predict(diabetes_cart_pruned, newdata = diabetes_test, type = "prob")[,2]
+```
+
+```{r}
+# Confusion Matrix
+cart_cm <- confusionMatrix(cart_predict_class, diabetes_test$Diabetes)
+cart_cm
+```
+
+```{r}
+# Plot ROC
+cart_roc <- roc(response = diabetes_test$Diabetes, predictor = cart_predict_prob, plot = TRUE, print.auc = TRUE)
+cart_roc
+```
+
+```{r}
+# Analyze the model performance
+cart_accuracy <- cart_cm$overall['Accuracy']
+cart_precision <- cart_cm$byClass['Pos Pred Value']
+cart_sensitivity <- cart_cm$byClass['Sensitivity']
+cart_f1score <- 2 * (cart_precision * cart_sensitivity) / (cart_precision + cart_sensitivity)
+cart_auc <- cart_roc$auc
+```
+```{r}
+cart_performance <- data.frame(
+  Model = "Decision Tree",
+  Accuracy = cart_accuracy,
+  Precision = cart_precision,
+  Sensitivity = cart_sensitivity,
+  F1_Score = cart_f1score,
+  AUC = cart_auc,
+  row.names = NULL
+)
+cart_performance
+```
+
+```{r}
+# Variable Importance
+diabetes_cart_pruned$variable.importance
+```
+*Result: Glucose, BMI, and Age are the top 3 most important variables in predicting Diabetes.*
+
+# 4 K-NEAREST NEIGHBOURS
+
+```{r}
+# KNN relies on distance measurements, so it's important to scale the data so that all features contribute equally to the distance calculations.
+# Scale the data, excluding the target variable
+diabetes_train_scaled <- scale(diabetes_train[,-ncol(diabetes_train)])
+diabetes_test_scaled <- scale(diabetes_test[,-ncol(diabetes_test)], center = attr(diabetes_train_scaled, "scaled:center"), scale = attr(diabetes_train_scaled, "scaled:scale"))
+```
+```{r}
+# Add the target variable back
+diabetes_train_scaled <- data.frame(diabetes_train_scaled, Diabetes = diabetes_train$Diabetes)
+diabetes_test_scaled <- data.frame(diabetes_test_scaled, Diabetes = diabetes_test$Diabetes)
+```
+
+```{r}
+# Build KNN model
+# Set seed for reproducibility
+set.seed(3000)
+
+# Creating KNN model using the scaled dataset
+k_value <- 1
+diabetes_knn1 <- knn(train = diabetes_train_scaled[,-ncol(diabetes_train_scaled)], 
+          test = diabetes_test_scaled[,-ncol(diabetes_test_scaled)], 
+          cl = diabetes_train_scaled$Diabetes, k = k_value)
+```
+
+```{r}
+# Calculate the classification accuracy rate
+knn_acc1 <- mean(diabetes_knn1 == diabetes_test_scaled$Diabetes) * 100
+print(paste("Classification Accuracy Rate for K = ", k_value, ": ", knn_acc1, "%", sep=""))
+```
+
+```{r}
+# Explore different k values to find the best one that generates highest  percentage of correct classification (PCC) or classification accuracy rate
+# Initialize a data frame to store k values and corresponding classification accuracy rates
+knn_acc_df <- data.frame("k_value" = 1:100, "acc_rate" = NA)
+
+for (i in 1:100){
+  set.seed(2024) # Ensure reproducibility
+  diabetes_knn <- knn(train = diabetes_train_scaled[,-ncol(diabetes_train_scaled)], 
+            test = diabetes_test_scaled[,-ncol(diabetes_test_scaled)], 
+            cl = diabetes_train_scaled$Diabetes, k = i)
+   knn_acc_df[i, "acc_rate"] <- mean(diabetes_knn == diabetes_test_scaled$Diabetes) * 100
+}
+```
+```{r}
+knn_acc_df
+```
+
+```{r}
+# Accuracy plot
+plot(knn_acc_df$k_value, knn_acc_df$acc_rate, type = "b", 
+     xlab = "K-Value", ylab = "Classification Accuracy Rate (%)", 
+     main = "KNN Classification Accuracy vs. K-Value")
+
+# Highlighting points for k = 10 with red color
+points(10, knn_acc_df$acc_rate[knn_acc_df$k_value == 10], col = "red", cex = 2, pch = 20)
+abline(v = 10, col = "red", lty = 2)
+```
+*Result: k = 10 gives the highest classification accuracy rate.*
+
+```{r}
+# Create KNN model using the best k value
+set.seed(2024)
+diabetes_knn_best <- knn(train = diabetes_train_scaled[,-ncol(diabetes_train_scaled)], 
+               test = diabetes_test_scaled[,-ncol(diabetes_test_scaled)], 
+               cl = diabetes_train_scaled$Diabetes, k = 10)
+```
+
+```{r}
+# Classification accuracy of the best KNN model
+knn_acc_best <- mean(diabetes_knn_best == diabetes_test_scaled$Diabetes) * 100
+print(paste("Testset Classification Accuracy with Best K = ", 10, ": ", knn_acc_best, "%", sep=""))
+```
+
+```{r}
+# Create confusion matrix
+# Ensure both predicted and actual values are factors and have the same levels
+diabetes_knn_best_factor <- factor(diabetes_knn_best, levels = levels(diabetes_test_scaled$Diabetes))
+
+# Confusion matrix
+knn_cm <- confusionMatrix(diabetes_knn_best_factor, diabetes_test_scaled$Diabetes)
+knn_cm
+```
+
+```{r}
+# Analyze the model performance
+knn_accuracy <- knn_cm$overall['Accuracy']
+knn_precision <- knn_cm$byClass['Pos Pred Value']
+knn_sensitivity <- knn_cm$byClass['Sensitivity']
+knn_f1score <- 2 * (knn_precision * knn_sensitivity) / (knn_precision + knn_sensitivity)
+knn_auc <- "-"
+```
+```{r}
+knn_performance <- data.frame(
+  Model = "K-Nearest Neighbours",
+  Accuracy = knn_accuracy,
+  Precision = knn_precision,
+  Sensitivity = knn_sensitivity,
+  F1_Score = knn_f1score,
+  AUC = knn_auc,
+  row.names = NULL
+)
+knn_performance
+```
+*Note that the 'knn()' function in 'class' package only outputs class lables without the probability estimates required for ROC curve analysis, we are unnable to plot ROC curve and calculate the AUC values for the KNN model. Thus, we will compe the KNN model's performance to other models using the accuracy, precision, sensitivity and F1 score.*
+
+# MODEL COMPARISON
+
+```{r}
+# Compare the accuracy, precision, sensitivity, F1 score, and auc score of all models
+mc_c <- rbind(lg_performance, rf_performance, cart_performance, knn_performance)
+mc_c
+```
+```{r}
+# Visualize model comparison
+mc_c_long <- pivot_longer(mc_c,
+                          cols = c(Accuracy, Precision, Sensitivity, F1_Score),
+                          names_to = "Metric", values_to = "Value")
+
+ggplot(mc_c_long, aes(x = Model, y = Value, fill = Model)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  facet_wrap(~ Metric, scales = "free_y") +
+  labs(title = "Comparison of Model Performance Metrics", x = "Model", y = "Value") +
+  theme_minimal() +
+  theme(strip.background = element_rect(fill="grey"),
+        strip.text = element_text(size = 12, face = "bold"))
+```
+
+```{r}
+# Compare the ROC curve
+plot(lg_roc, col = "red", main = "ROC Curves Comparison")
+lines(rf_roc, col = "green")
+lines(cart_roc, col = "blue")
+legend_position <- c(1, 0.93, 0.86, 0.79)
+text(1.4, legend_position[1], labels = paste("AUC LG: ", round(lg_auc, 3)), col = "red", xpd = TRUE, pos = 4)
+text(1.4, legend_position[2], labels = paste("AUC RF: ", round(rf_auc, 3)), col = "green", xpd = TRUE, pos = 4)
+text(1.4, legend_position[3], labels = paste("AUC CART: ", round(cart_auc, 3)), col = "blue", xpd = TRUE, pos = 4)
+legend("bottomright", inset = c(0, 0.07),
+       legend = c("Logistic Regression", "Random Forest", "Decision Tree"),
+       col = c("red", "green", "blue"), lwd = 2)
+```
